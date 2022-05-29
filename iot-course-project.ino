@@ -1,82 +1,79 @@
 #include <WiFi.h>          //https://github.com/esp8266/Arduino
 
-//needed for library
-#include <DNSServer.h>
 #include <WebServer.h>
 #include <WiFiManager.h>         //https://github.com/tzapu/WiFiManager
-//#include <MDNS.h>
+#include <ESPmDNS.h>
+
+#include <Preferences.h>
 
 WebServer server(80);
-
-const int led = 13;
-
-void handleRoot() {
-  digitalWrite(led, 1);
-  server.send(200, "text/plain", "hello from esp8266!");
-  digitalWrite(led, 0);
-}
-
-void handleNotFound(){
-  digitalWrite(led, 1);
-  String message = "File Not Found\n\n";
-  message += "URI: ";
-  message += server.uri();
-  message += "\nMethod: ";
-  message += (server.method() == HTTP_GET)?"GET":"POST";
-  message += "\nArguments: ";
-  message += server.args();
-  message += "\n";
-  for (uint8_t i=0; i<server.args(); i++){
-    message += " " + server.argName(i) + ": " + server.arg(i) + "\n";
-  }
-  server.send(404, "text/plain", message);
-  digitalWrite(led, 0);
-}
+Preferences preferences;
 
 void setup() {
-  // put your setup code here, to run once:
   Serial.begin(115200);
 
-  //WiFiManager
-  //Local intialization. Once its business is done, there is no need to keep it around
   WiFiManager wifiManager;
-  //reset saved settings
   //wifiManager.resetSettings();
-  
-  //set custom ip for portal
-  //wifiManager.setAPStaticIPConfig(IPAddress(10,0,1,1), IPAddress(10,0,1,1), IPAddress(255,255,255,0));
 
-  //fetches ssid and pass from eeprom and tries to connect
-  //if it does not connect it starts an access point with the specified name
-  //here  "AutoConnectAP"
-  //and goes into a blocking loop awaiting configuration
-  wifiManager.autoConnect("AutoConnectAP1","testpass");
-  //or use this for auto generated name ESP + ChipID
+  wifiManager.autoConnect("AutoConnectAP1", "testpass");
   //wifiManager.autoConnect();
 
-  
-  //if you get here you have connected to the WiFi
   Serial.println("connected...yeey :)");
-  
+
   Serial.println("");
   Serial.print("Connected to ");
   Serial.println(WiFi.SSID());
   Serial.print("IP address: ");
   Serial.println(WiFi.localIP());
 
-  server.on("/", handleRoot);
+  if (MDNS.begin("esp32")) {
+    Serial.println("MDNS responder started");
+  }
 
-  server.on("/inline", [](){
-    server.send(200, "text/plain", "this works as well");
+  preferences.begin("app", false);
+
+  server.on("/", HTTP_GET, [](){
+
+    String stopCode = preferences.getString("stopCode", "");
+
+    String html = "";
+    html += "<!DOCTYPE html><html lang='en'>";
+    html += "<head>";
+    html += "<meta charset='UTF-8'>";
+    html += "<meta name='viewport' content='width=device-width,initial-scale=1,user-scalable=no' />";
+    html += "</head>";
+    html += "<body>";
+    html += "<h1>Stop configuration</h1>";
+    html += "<p>";
+    html += "Configured stop: ";
+    html += stopCode;
+    html += "</p>";
+    html += "<form method='POST'>";
+    html += "<label>";
+    html += "Enter stop code: ";
+    html += "<input type='text' name='stop-code'></input>";
+    html += "<input type='submit' value='Save'>";
+    html += "</label>";
+    html += "</form>";
+    html += "</body>";
+    html += "</html>";
+
+    server.send(200, "text/html", html);
   });
 
-  server.onNotFound(handleNotFound);
+  server.on("/", HTTP_POST, [](){
+    String code = server.arg("stop-code");
+
+    preferences.putString("stopCode", code);
+
+    server.sendHeader("Location", "/");
+    server.send(303);
+  });
 
   server.begin();
   Serial.println("HTTP server started");
 }
 
 void loop() {
-   server.handleClient();
-    
+  server.handleClient();
 }
