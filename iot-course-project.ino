@@ -1,16 +1,30 @@
-#include <WiFi.h>          //https://github.com/esp8266/Arduino
+#include <Wire.h>
+#include <LiquidCrystal_PCF8574.h>
+
+#include <WiFi.h>                //https://github.com/esp8266/Arduino
+#include <WiFiManager.h>         //https://github.com/tzapu/WiFiManager
 
 #include <WebServer.h>
-#include <WiFiManager.h>         //https://github.com/tzapu/WiFiManager
 #include <ESPmDNS.h>
-#include <HTTPClient.h>
-#include <WiFiClientSecure.h>
+
 #include <Preferences.h>
+
+#include <HTTPClient.h>
+#include <WiFiClient.h>
+#include <WiFiClientSecure.h>
+
 #include <ArduinoJson.h>
 #include <TimeLib.h>
 
 namespace Constants {
-  const char[] CERT = \
+  const char AP_SSID[]      =   "esp32AP";
+  const char AP_PASS[]      =   "testpass";
+  const char MDNS_DOMAIN[]  =   "esp32";
+
+  const int LCD_COLS        =   16;
+  const int LCD_ROWS        =   2;
+
+  const char CERT[] = \
   "-----BEGIN CERTIFICATE-----\n" \
   "MIIFazCCA1OgAwIBAgIRAIIQz7DSQONZRGPgu2OCiwAwDQYJKoZIhvcNAQELBQAw\n" \
   "TzELMAkGA1UEBhMCVVMxKTAnBgNVBAoTIEludGVybmV0IFNlY3VyaXR5IFJlc2Vh\n" \
@@ -43,39 +57,138 @@ namespace Constants {
   "emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=\n" \
   "-----END CERTIFICATE-----\n";
   
-  const char[] API_ENDPOINT = "https://cukii.me/sumc/api/timing/";
+  const char API_ENDPOINT[] = "https://cukii.me/sumc/api/timing/";
   
-  const char[] TIME_FORMAT = "%d-%d-%d %d:%d:%d";
+  const char TIME_FORMAT[] = "%d-%d-%d %d:%d:%d";
+  const char TIME_FORMAT_TIME_ONLY[] = "%d:%d:%d";
+
+  const int FETCH_INTERVAL_SECONDS = 15;
+
+  const int ARRIVAL_INFO_DURATION_SECONDS = 5;
 }
+
+int CurrentYear = 1970;
+int CurrentMonth = 1;
+int CurrentDay = 1;
+
+struct BusStopInfo {
+  JsonArray lines;
+  const char* calculatedTime;
+};
+
+String httpsGET(const char* address, const char* certificate) {
+  WiFiClient* client;
+  String result = "";
+  if (certificate) {
+    client = new WiFiClientSecure;
+    ((WiFiClientSecure*)client)->setCACert(certificate);
+  } else {
+    client = new WiFiClient;
+  }
+  {
+    // Add a scoping block for HTTPClient https to make sure it is destroyed before WiFiClientSecure *client is 
+    HTTPClient https;
+    Serial.print("[HTTPS] begin...\n");
+    if (https.begin(*client, address)) {  // HTTPS
+      Serial.print("[HTTPS] GET...\n");
+      // start connection and send HTTP header
+      int httpCode = https.GET();
+
+      // httpCode will be negative on error
+      if (httpCode > 0) {
+        // HTTP header has been send and Server response header has been handled
+        Serial.printf("[HTTPS] GET... code: %d\n", httpCode);
+
+        // file found at server
+        if (httpCode == HTTP_CODE_OK || httpCode == HTTP_CODE_MOVED_PERMANENTLY) {
+          result = https.getString();
+          return result;
+        }
+      } else {
+        Serial.printf("[HTTPS] GET... failed, error: %s\n", https.errorToString(httpCode).c_str());
+      }
+
+      https.end();
+    } else {
+      Serial.printf("[HTTPS] Unable to connect\n");
+    }
+    // End extra scoping block
+  }
+  
+  delete client;
+  
+  return result;
+}
+
+time_t deserializeTime(const String& data) {
+  StaticJsonDocument<768> doc;
+
+  DeserializationError error = deserializeJson(doc, data);
+
+  if (error) {
+    Serial.print("deserializeJson() failed: ");
+    Serial.println(error.c_str());
+    return 0;
+  }
+
+  return doc["unixtime"];
+}
+
+//time_t getCurrentTime() {
+// return deserializeTime(httpsGET("http://worldtimeapi.org/api/timezone/Europe/Sofia", NULL));
+//}
+
+LiquidCrystal_PCF8574 lcd(0x27);
 WebServer server(80);
 Preferences preferences;
+
+String stopCode = "";
+bool stopCodeChanged = true;
 
 void setup() {
   Serial.begin(115200);
 
+  Wire.begin(16, 17);
+  lcd.begin(Constants::LCD_COLS, Constants::LCD_ROWS);
+  lcd.setBacklight(255);
+
   WiFiManager wifiManager;
   //wifiManager.resetSettings();
 
-  wifiManager.autoConnect("AutoConnectAP1", "testpass");
+  wifiManager.setAPCallback([](WiFiManager* wifiManager){
+    lcd.clear();
+    lcd.print(String("SSID: ") + Constants::AP_SSID);
+    lcd.setCursor(0, 1);
+    lcd.print(String("Pass: ") + Constants::AP_PASS);
+  });
+
+  lcd.clear();
+  lcd.print("Connecting...");
+
+  wifiManager.autoConnect(Constants::AP_SSID, Constants::AP_PASS);
   //wifiManager.autoConnect();
 
   Serial.println("connected...yeey :)");
+  Serial.println(String("SSID: ") + WiFi.SSID());
+  Serial.println(String("IP: ") + WiFi.localIP());
 
-  Serial.println("");
-  Serial.print("Connected to ");
-  Serial.println(WiFi.SSID());
-  Serial.print("IP address: ");
-  Serial.println(WiFi.localIP());
+  lcd.clear();
+  lcd.print("Connected to:");
+  lcd.setCursor(0, 1);
+  lcd.print(WiFi.SSID().substring(0, Constants::LCD_COLS - 1));
+  delay(1000);
+//  
+//  time_t currentTime = getCurrentTime();
+//  setTime(currentTime);
 
-  if (MDNS.begin("esp32")) {
+  if (MDNS.begin(Constants::MDNS_DOMAIN)) {
     Serial.println("MDNS responder started");
   }
 
   preferences.begin("app", false);
+  //preferences.clear();
 
   server.on("/", HTTP_GET, [](){
-
-    String stopCode = preferences.getString("stopCode", "");
 
     String html = "";
     html += "<!DOCTYPE html><html lang='en'>";
@@ -93,8 +206,8 @@ void setup() {
     html += "<label>";
     html += "Enter stop code: ";
     html += "<input type='text' name='stop-code'></input>";
-    html += "<input type='submit' value='Save'>";
     html += "</label>";
+    html += "<input type='submit' value='Save'>";
     html += "</form>";
     html += "</body>";
     html += "</html>";
@@ -115,15 +228,14 @@ void setup() {
   Serial.println("HTTP server started");
 }
 
-
-JsonArray deserializeApiOutput(const String& data) {
-  DynamicJsonDocument doc(3072);
+BusStopInfo deserializeApiOutput(const String& data) {
+  DynamicJsonDocument doc(8192);
   DeserializationError error = deserializeJson(doc, data);
 
   if (error) {
     Serial.print("deserializeJson() failed: ");
     Serial.println(error.c_str());
-    return JsonArray();
+    return { JsonArray(), "" };
   }
   
   const char* timestamp_calculated = doc["timestamp_calculated"]; // "2022-05-30 23:45:22"
@@ -134,16 +246,37 @@ JsonArray deserializeApiOutput(const String& data) {
   // const JsonObject line = lines[i];
   // const JsonArray arrivals = line["arrivals"].as<JsonArray>()
   // arrivals[j]["time"] -> char*
-  return lines;
+  
+
+
+  return {lines, timestamp_calculated};
 }
 
-tmElements_t parseStringToTime(const char* timeStr) {
+
+void setCurrentDate(tmElements_t elements) {
+  CurrentYear = elements.Year;
+  CurrentMonth = elements.Month;
+  CurrentDay = elements.Day;
+  
+  setTime(makeTime(elements));
+}
+
+tmElements_t parseStringToTime(const char* timeStr, bool parseYearMonthDay) {
+  Serial.println(String("Parsing time string: ") + timeStr);
   tmElements_t tm;
   int Year, Month, Day, Hour, Minute, Second;
-  sscanf(timeStr, "%d-%d-%d %d:%d:%d", &Year, &Month, &Day, &Hour, &Minute, &Second);
-  tm.Year = CalendarYrToTm(Year);
-  tm.Month = Month;
-  tm.Day = Day;
+  if (parseYearMonthDay) {
+    sscanf(timeStr, Constants::TIME_FORMAT, &Year, &Month, &Day, &Hour, &Minute, &Second);
+    tm.Year = CalendarYrToTm(Year);
+    tm.Month = Month;
+    tm.Day = Day;
+  }
+  else {
+    sscanf(timeStr, Constants::TIME_FORMAT_TIME_ONLY, &Hour, &Minute, &Second);
+    tm.Year = CurrentYear;
+    tm.Month = CurrentMonth;
+    tm.Day = CurrentDay;
+  }
   tm.Hour = Hour;
   tm.Minute = Minute;
   tm.Second = Second;
@@ -151,58 +284,77 @@ tmElements_t parseStringToTime(const char* timeStr) {
   return tm; 
 }
 
-JsonArray getBusStopInfo(int busStopId) {
-  String address(API_ENDPOINT + busStopId);
-  String output = httpsGET(address.c_str(), CERT);
-
+BusStopInfo getBusStopInfo(const String& busStopId) {
+  String address(Constants::API_ENDPOINT + busStopId);
+  String output = httpsGET(address.c_str(), Constants::CERT);
+  
   return deserializeApiOutput(output);
 }
 
-String httpsGET(const char* address, const char* certificate) {
-  WiFiClientSecure *client = new WiFiClientSecure;
-  String result = "";
-  if(client) {
-    client->setCACert(certificate);
-
-    {
-      // Add a scoping block for HTTPClient https to make sure it is destroyed before WiFiClientSecure *client is 
-      HTTPClient https;
-      Serial.print("[HTTPS] begin...\n");
-      if (https.begin(*client, certificate)) {  // HTTPS
-        Serial.print("[HTTPS] GET...\n");
-        // start connection and send HTTP header
-        int httpCode = https.GET();
-  
-        // httpCode will be negative on error
-        if (httpCode > 0) {
-          // HTTP header has been send and Server response header has been handled
-          Serial.printf("[HTTPS] GET... code: %d\n", httpCode);
-  
-          // file found at server
-          if (httpCode == HTTP_CODE_OK || httpCode == HTTP_CODE_MOVED_PERMANENTLY) {
-            result = https.getString();
-            return result;
-          }
-        } else {
-          Serial.printf("[HTTPS] GET... failed, error: %s\n", https.errorToString(httpCode).c_str());
-        }
-  
-        https.end();
-      } else {
-        Serial.printf("[HTTPS] Unable to connect\n");
-      }
-      // End extra scoping block
-    }
-  
-    delete client;
-  } else {
-    Serial.println("Unable to create client");
-  }
-  return result;
-}
-
+time_t lastFetch = 1;
+bool shouldFetch = true;
+JsonArray lines = JsonArray();
 void loop() {
   server.handleClient();
   
-  delay(1000000);
+  String savedStopCode = preferences.getString("stopCode", "");
+  if (stopCode != savedStopCode) {
+    stopCode = savedStopCode;
+    stopCodeChanged = true;
+  }
+
+  shouldFetch = (now() - lastFetch) > Constants::FETCH_INTERVAL_SECONDS;
+  Serial.println(String("now: ") + now());
+  Serial.println(String("lastFetch: ") + lastFetch);
+  Serial.println(String("shouldFetch: ") + (shouldFetch? "true" : "false"));
+  if (stopCodeChanged) {
+    stopCodeChanged = false;
+    lastFetch = 0;
+    if (stopCode.length() == 0) {
+      lcd.clear();
+      lcd.print("Browse URL:");
+      lcd.setCursor(0, 1);
+      lcd.print(String(Constants::MDNS_DOMAIN) + ".local");
+    } else {
+      lcd.clear();
+      lcd.print("Watching stop:");
+      lcd.setCursor(0, 1);
+      lcd.print(stopCode.substring(0, Constants::LCD_COLS - 1));
+    }
+  } else {
+    if (shouldFetch) {
+      Serial.println(String("Fetching info for stop: ") + savedStopCode);
+      BusStopInfo busStopInfo = getBusStopInfo(savedStopCode);
+      auto timeToSet = parseStringToTime(busStopInfo.calculatedTime, true);
+      lines = busStopInfo.lines;
+      setCurrentDate(timeToSet);
+      
+      lastFetch = now();
+    }
+    if (lines.size() == 0) {
+      lcd.clear();
+      lcd.print("No stop info.");
+      delay(10000);
+    } else {
+      for (const auto& line : lines) {
+        if (line["arrivals"].size() == 0) {
+          continue;
+        }
+        const char* arrival = line["arrivals"].as<JsonArray>()[0]["time"];
+        Serial.println(String("arrivalStr: ") + arrival);
+        auto firstArrivingTime = makeTime(parseStringToTime(arrival, false));
+        lcd.clear();
+        unsigned long minutesToNext = (firstArrivingTime - now())/60;
+        const char* lineName = line["name"];
+        lcd.print(lineName);
+        lcd.setCursor(0,1);
+        lcd.print(String("Sled ") + minutesToNext + " minuti");
+        delay(Constants::ARRIVAL_INFO_DURATION_SECONDS * 1000);
+      }
+    }
+    // TODO: fetch timetables if now - last_fetch > FETCH_INTERVAL
+    // TODO: show line arrival times
+    // TODO: cycle through lines when more than two
+  }
+
 }
