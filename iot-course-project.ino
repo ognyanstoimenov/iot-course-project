@@ -67,10 +67,6 @@ namespace Constants {
   const unsigned int ARRIVAL_INFO_DURATION_SECONDS = 5;
 }
 
-int CurrentYear = 1970;
-int CurrentMonth = 1;
-int CurrentDay = 1;
-
 struct BusStopInfo {
   JsonArray lines;
   const char* calculatedTime;
@@ -228,7 +224,8 @@ void setup() {
   Serial.println("HTTP server started");
 }
 
-BusStopInfo deserializeApiOutput(const String& data) {
+BusStopInfo deserializeApiOutput(String data) {
+  Serial.println("Deserializing data...");
   DynamicJsonDocument doc(16384);
   DeserializationError error = deserializeJson(doc, data);
 
@@ -247,17 +244,13 @@ BusStopInfo deserializeApiOutput(const String& data) {
   // const JsonArray arrivals = line["arrivals"].as<JsonArray>()
   // arrivals[j]["time"] -> char*
   
-
-
   return {lines, timestamp_calculated, true};
 }
 
-void setCurrentDate(tmElements_t elements) {
-  CurrentYear = elements.Year;
-  CurrentMonth = elements.Month;
-  CurrentDay = elements.Day;
-  
-  setTime(makeTime(elements));
+void setCurrentTime(tmElements_t elements) {
+  auto currentTime = makeTime(elements);
+  setTime(currentTime);
+  Serial.println(String("Set current time to: ") + currentTime); // TODO: better time logging.
 }
 
 tmElements_t parseStringToTime(const char* timeStr, bool parseYearMonthDay) {
@@ -272,14 +265,14 @@ tmElements_t parseStringToTime(const char* timeStr, bool parseYearMonthDay) {
   }
   else {
     sscanf(timeStr, Constants::TIME_FORMAT_TIME_ONLY, &Hour, &Minute, &Second);
-    tm.Year = CurrentYear;
-    tm.Month = CurrentMonth;
-    tm.Day = CurrentDay;
+    tm.Year = CalendarYrToTm(year());
+    tm.Month = month();
+    tm.Day = day();
   }
   tm.Hour = Hour;
   tm.Minute = Minute;
   tm.Second = Second;
-
+  
   return tm; 
 }
 
@@ -328,31 +321,28 @@ void loop() {
       if (busStopInfo.isValid) {
         auto timeToSet = parseStringToTime(busStopInfo.calculatedTime, true);
         lines = busStopInfo.lines;
-        setCurrentDate(timeToSet);
+        setCurrentTime(timeToSet);
         
         lastFetch = now();
       }
     }
-    if (lines.size() == 0) {
-      lcd.clear();
-      lcd.print("No stop info.");
-      delay(10000);
-    } else {
-      for (const auto& line : lines) {
-        if (line["arrivals"].size() == 0) {
-          continue;
-        }
-        const char* arrival = line["arrivals"].as<JsonArray>()[0]["time"];
-        Serial.println(String("arrivalStr: ") + arrival);
-        auto firstArrivingTime = makeTime(parseStringToTime(arrival, false));
-        lcd.clear();
-        unsigned long minutesToNext = (firstArrivingTime - now())/60;
-        const char* lineName = line["name"];
-        lcd.print(lineName);
-        lcd.setCursor(0,1);
-        lcd.print(String("Sled ") + minutesToNext + " minuti");
-        delay(Constants::ARRIVAL_INFO_DURATION_SECONDS * 1000);
+    Serial.println(String("Found ") + lines.size() + " lines");
+    for (const auto& line : lines) {
+      const char* arrival = line["arrivals"].as<JsonArray>()[0]["time"];
+      if (!arrival) {
+        continue;
       }
+      auto firstArrivingTime = makeTime(parseStringToTime(arrival, false));
+      lcd.clear();
+      const char* lineName = line["name"];
+      int minutesToNext = (firstArrivingTime - now())/60;
+      Serial.println(String("Bus line:") + lineName);
+      Serial.println(String("Now: ") + now());
+      Serial.println(String("arriving: ") + firstArrivingTime);
+      lcd.print(lineName);
+      lcd.setCursor(0,1);
+      lcd.print(String("Sled ") + minutesToNext + " minuti");
+      delay(Constants::ARRIVAL_INFO_DURATION_SECONDS * 1000);
     }
   }
 
