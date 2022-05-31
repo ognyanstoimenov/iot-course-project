@@ -62,9 +62,9 @@ namespace Constants {
   const char TIME_FORMAT[] = "%d-%d-%d %d:%d:%d";
   const char TIME_FORMAT_TIME_ONLY[] = "%d:%d:%d";
 
-  const int FETCH_INTERVAL_SECONDS = 15;
+  const unsigned int FETCH_INTERVAL_SECONDS = 15;
 
-  const int ARRIVAL_INFO_DURATION_SECONDS = 5;
+  const unsigned int ARRIVAL_INFO_DURATION_SECONDS = 5;
 }
 
 int CurrentYear = 1970;
@@ -74,6 +74,7 @@ int CurrentDay = 1;
 struct BusStopInfo {
   JsonArray lines;
   const char* calculatedTime;
+  bool isValid;
 };
 
 String httpsGET(const char* address, const char* certificate) {
@@ -177,9 +178,8 @@ void setup() {
   lcd.setCursor(0, 1);
   lcd.print(WiFi.SSID().substring(0, Constants::LCD_COLS - 1));
   delay(1000);
-//  
-//  time_t currentTime = getCurrentTime();
-//  setTime(currentTime);
+
+  setTime(Constants::FETCH_INTERVAL_SECONDS + 1); // Workaround to begin search on first loop()
 
   if (MDNS.begin(Constants::MDNS_DOMAIN)) {
     Serial.println("MDNS responder started");
@@ -229,13 +229,13 @@ void setup() {
 }
 
 BusStopInfo deserializeApiOutput(const String& data) {
-  DynamicJsonDocument doc(8192);
+  DynamicJsonDocument doc(16384);
   DeserializationError error = deserializeJson(doc, data);
 
   if (error) {
     Serial.print("deserializeJson() failed: ");
     Serial.println(error.c_str());
-    return { JsonArray(), "" };
+    return { JsonArray(), "", false };
   }
   
   const char* timestamp_calculated = doc["timestamp_calculated"]; // "2022-05-30 23:45:22"
@@ -249,9 +249,8 @@ BusStopInfo deserializeApiOutput(const String& data) {
   
 
 
-  return {lines, timestamp_calculated};
+  return {lines, timestamp_calculated, true};
 }
-
 
 void setCurrentDate(tmElements_t elements) {
   CurrentYear = elements.Year;
@@ -291,7 +290,7 @@ BusStopInfo getBusStopInfo(const String& busStopId) {
   return deserializeApiOutput(output);
 }
 
-time_t lastFetch = 1;
+time_t lastFetch = 0;
 bool shouldFetch = true;
 JsonArray lines = JsonArray();
 void loop() {
@@ -325,11 +324,14 @@ void loop() {
     if (shouldFetch) {
       Serial.println(String("Fetching info for stop: ") + savedStopCode);
       BusStopInfo busStopInfo = getBusStopInfo(savedStopCode);
-      auto timeToSet = parseStringToTime(busStopInfo.calculatedTime, true);
-      lines = busStopInfo.lines;
-      setCurrentDate(timeToSet);
-      
-      lastFetch = now();
+      Serial.println(String("busStopInfo.isValid: ") + busStopInfo.isValid);
+      if (busStopInfo.isValid) {
+        auto timeToSet = parseStringToTime(busStopInfo.calculatedTime, true);
+        lines = busStopInfo.lines;
+        setCurrentDate(timeToSet);
+        
+        lastFetch = now();
+      }
     }
     if (lines.size() == 0) {
       lcd.clear();
@@ -352,9 +354,6 @@ void loop() {
         delay(Constants::ARRIVAL_INFO_DURATION_SECONDS * 1000);
       }
     }
-    // TODO: fetch timetables if now - last_fetch > FETCH_INTERVAL
-    // TODO: show line arrival times
-    // TODO: cycle through lines when more than two
   }
 
 }
