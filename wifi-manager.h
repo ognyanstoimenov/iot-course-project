@@ -7,14 +7,18 @@ namespace Constants {
 }
 
 void wifiManager_setup(
-  void (*apCb)(),
+  void (*apCb)(const String&, const String&),
   void (*reconnnectCb)(),
-  void (*connectedCb)(const String SSID)) {
+  void (*connectedCb)(const String&)) {
 
   WiFiManager wifiManager;
   //wifiManager.resetSettings();
 
-  wifiManager.setAPCallback(apCb);
+  wifiManager.setAPCallback(
+    [apCb](WiFiManager* wifiManager) {
+      apCb(Constants::AP_SSID, Constants::AP_PASS);
+    }
+  );
 
   reconnnectCb();
 

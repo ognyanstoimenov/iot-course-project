@@ -33,17 +33,17 @@ void setup() {
   lcd.setBacklight(255);
 
   wifiManager_setup(
-    []() {
+    [](const String& ssid, const String& pass) {
       lcd.clear();
-      lcd.print(String("SSID: ") + Constants::AP_SSID);
+      lcd.print(String("SSID: ") + ssid);
       lcd.setCursor(0, 1);
-      lcd.print(String("Pass: ") + Constants::AP_PASS);
+      lcd.print(String("Pass: ") + pass);
     },
     []() {
       lcd.clear();
       lcd.print("Connecting...");
     },
-    [](const String ssid) {
+    [](const String& ssid) {
       lcd.clear();
       lcd.print("Connected to:");
       lcd.setCursor(0, 1);
