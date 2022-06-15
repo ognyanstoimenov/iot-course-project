@@ -8,7 +8,9 @@ namespace Constants {
 
 WebServer server(Constants::SERVER_PORT);
 
-void webServer_setup(String (*getStopCode)(), void (*setStopCode)(String)) {
+void webServer_setup(
+  String (*getStopCode)(),
+  void (*setStopCode)(const String&)) {
 
   if (MDNS.begin(Constants::MDNS_DOMAIN)) {
     Serial.println("webServer_setup|MDNS responder started");
