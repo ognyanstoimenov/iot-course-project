@@ -48,10 +48,10 @@ namespace Constants {
 
 struct Line {
   String name;
-  time_t nexArrival;
+  time_t nextArrival;
 };
 
-struct BusStopInfo {
+struct StopInfo {
   Vector<Line> lines;
   time_t calculatedTime;
   bool isValid;
@@ -71,16 +71,16 @@ String httpsGET(const char* address, const char* certificate) {
   {
     // Add a scoping block for HTTPClient https to make sure it is destroyed before WiFiClientSecure *client is 
     HTTPClient https;
-    Serial.print("httpsGET|[HTTPS] begin...\n");
+    Serial.println("httpsGET|[HTTPS] begin...");
     if (https.begin(*client, address)) {  // HTTPS
-      Serial.print("httpsGET|[HTTPS] GET...\n");
+      Serial.println("httpsGET|[HTTPS] GET...");
       // start connection and send HTTP header
       int httpCode = https.GET();
 
       // httpCode will be negative on error
       if (httpCode > 0) {
         // HTTP header has been send and Server response header has been handled
-        Serial.printf("httpsGET|[HTTPS] GET... code: %d\n", httpCode);
+        Serial.println(String("httpsGET|[HTTPS] GET... code: ") + httpCode);
 
         // file found at server
         if (httpCode == HTTP_CODE_OK || httpCode == HTTP_CODE_MOVED_PERMANENTLY) {
@@ -88,12 +88,12 @@ String httpsGET(const char* address, const char* certificate) {
           return result;
         }
       } else {
-        Serial.printf("httpsGET|[HTTPS] GET... failed, error: %s\n", https.errorToString(httpCode).c_str());
+        Serial.println("httpsGET|[HTTPS] GET... failed, error: " + https.errorToString(httpCode));
       }
 
       https.end();
     } else {
-      Serial.printf("httpsGET|[HTTPS] Unable to connect\n");
+      Serial.println("httpsGET|[HTTPS] Unable to connect");
     }
     // End extra scoping block
   }
@@ -119,7 +119,7 @@ tmElements_t parseTime(const char* timeStr, time_t relative) {
   return buildTime(year(relative), month(relative), day(relative), hour, minute, second);
 }
 
-BusStopInfo deserializeApiOutput(String data) {
+StopInfo deserializeApiOutput(const String& data) {
   Serial.println("deserializeApiOutput|Deserializing data...");
   DynamicJsonDocument doc(16384);
   DeserializationError error = deserializeJson(doc, data);
@@ -167,8 +167,8 @@ BusStopInfo deserializeApiOutput(String data) {
   return {lines, calculatedTime, true};
 }
 
-BusStopInfo getBusStopInfo(const String& busStopId) {
-  String address(Constants::API_ENDPOINT + busStopId);
+StopInfo getStopInfo(const String& stopId) {
+  String address(Constants::API_ENDPOINT + stopId);
   String output = httpsGET(address.c_str(), Constants::CERT);
 
   return deserializeApiOutput(output);
